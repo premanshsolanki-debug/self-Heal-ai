@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SelfHeal AI — Self-Healing Automation Demo</title>
+
+<!--
+  SelfHeal AI — hackathon prototype
+  ---------------------------------
+  One file, no backend, no API keys, no internet needed.
+  Everything is simulated inside your browser's memory:
+    - no network requests are made
+    - no commands are executed
+    - nothing on your computer is changed
+  Sections of this file:
+    1. CSS (the look)
+    2. HTML (the layout)
+    3. JavaScript (the logic): state -> knowledge base -> workflow steps
+       -> failure handling -> retry / approval -> verification -> rendering
+-->
+
+<style>
+  /* ===== 1. CSS: colours are defined once as variables so they're easy to change ===== */
+  :root{
+    --bg:#0b1020; --panel:#121a30; --line:#243055;
+    --text:#e6ebff; --muted:#8d98c4;
+    --accent:#6d8dff; --accent2:#22d3ee;
+    --ok:#34d399; --warn:#fbbf24; --err:#f87171; --info:#60a5fa;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:radial-gradient(1100px 500px at 8% -10%,#1b2656 0%,transparent 60%),
+               radial-gradient(900px 500px at 100% 0%,#0e3a4a 0%,transparent 55%),var(--bg);
+    min-height:100vh;
+  }
+  .wrap{max-width:1280px;margin:0 auto;padding:24px}
+  header{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;margin-bottom:20px}
+  .brand{display:flex;gap:14px;align-items:center}
+  .logo{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;font-size:24px;
+        background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 8px 24px #22d3ee33}
+  h1{font-size:22px;margin:0;letter-spacing:.2px}
+  .tag{color:var(--muted);font-size:13px}
+  h2{font-size:13px;margin:0 0 12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);font-weight:600}
+  h3{font-size:13px;margin:14px 0 4px;color:var(--accent2);font-weight:600}
+
+  .card{background:linear-gradient(180deg,var(--panel),#0f1730);border:1px solid var(--line);
+        border-radius:16px;padding:18px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+  .stat .num{font-size:36px;font-weight:700;line-height:1.1}
+  .stat .lbl{color:var(--muted);font-size:13px}
+  .stat.s-fail .num{color:var(--err)} .stat.s-rec .num{color:var(--ok)} .stat.s-rate .num{color:var(--accent2)}
+
+  .grid{display:grid;grid-template-columns:1.1fr 1fr;gap:18px;align-items:start}
+  .col{display:flex;flex-direction:column;gap:18px}
+
+  /* badges and chips */
+  .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid transparent}
+  .b-idle{background:#1c2547;color:var(--muted);border-color:var(--line)}
+  .b-info{background:#12305a;color:var(--info);border-color:#1e4a85}
+  .b-ok{background:#0d3a2e;color:var(--ok);border-color:#156a53}
+  .b-warn{background:#3d3010;color:var(--warn);border-color:#6b5415}
+  .b-err{background:#4a1a1f;color:var(--err);border-color:#7d2b33}
+
+  /* buttons */
+  .btn{border:0;border-radius:10px;padding:10px 16px;font:inherit;font-weight:600;cursor:pointer;color:var(--text);
+       background:#1c2547;border:1px solid var(--line);transition:transform .08s,opacity .2s,filter .2s}
+  .btn:hover:not(:disabled){filter:brightness(1.2)} .btn:active:not(:disabled){transform:scale(.97)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent2);outline-offset:2px}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),#4f6bff);border-color:transparent}
+  .btn.good{background:#0f5c46;border-color:#16856a}
+  .btn.bad{background:#5a1f26;border-color:#8c343d}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+
+  select{background:#0c1329;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit}
+  label.chk{display:flex;gap:8px;align-items:flex-start;color:var(--muted);font-size:13px;margin-top:12px;cursor:pointer}
+
+  /* workflow pipeline */
+  ol.pipe{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  ol.pipe li{display:flex;gap:12px;align-items:center;padding:10px 12px;border-radius:12px;background:#0c1329;border:1px solid var(--line)}
+  .ic{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;
+      border:2px solid var(--line);color:var(--muted);flex:none}
+  li.running .ic{border-color:var(--accent);border-top-color:transparent;animation:spin .8s linear infinite}
+  li.running{border-color:var(--accent)}
+  li.done .ic{background:var(--ok);border-color:var(--ok);color:#04251b}
+  li.failed .ic{background:var(--err);border-color:var(--err);color:#2b0507}
+  li.failed{border-color:#7d2b33;background:#2a1219}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* text blocks */
+  pre,textarea{background:#080d1d;border:1px solid var(--line);border-radius:10px;padding:10px;margin:4px 0;
+       font:12.5px/1.45 ui-monospace,Consolas,Menlo,monospace;color:#cfd8ff;overflow:auto;white-space:pre-wrap;word-break:break-word}
+  textarea{width:100%;min-height:150px;resize:vertical}
+  ul{margin:4px 0 0 18px;padding:0} li{margin:2px 0}
+  .muted{color:var(--muted)} .empty{color:var(--muted);font-style:italic}
+  .notice{border:1px dashed #3a4a85;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px;background:#0d1530}
+  .notice b{color:var(--accent2)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .two small{color:var(--muted)}
+
+  /* charts: plain divs whose width we set from JavaScript */
+  .bar{display:grid;grid-template-columns:150px 1fr 28px;gap:10px;align-items:center;margin:8px 0;font-size:13px}
+  .track{background:#0a1022;border-radius:999px;height:12px;overflow:hidden;border:1px solid var(--line)}
+  .fill{height:100%;border-radius:999px;transition:width .5s ease;width:0}
+
+  /* execution history */
+  #history{max-height:340px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+  .ev{display:grid;grid-template-columns:70px 34px 78px 1fr;gap:8px;font-size:12.5px;align-items:start;
+      padding:6px 8px;border-radius:8px;background:#0a1022}
+  .ev .t{color:var(--muted);font-family:ui-monospace,Consolas,monospace}
+  .lv{font-weight:700;font-size:11px;letter-spacing:.5px}
+  .lv-ok,.lv-verify{color:var(--ok)} .lv-error{color:var(--err)} .lv-retry,.lv-approval{color:var(--warn)}
+  .lv-detect{color:#c4a1ff} .lv-start,.lv-info{color:var(--info)}
+  footer{margin-top:22px;color:var(--muted);font-size:12.5px;text-align:center}
+
+  @media(max-width:920px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.bar{grid-template-columns:120px 1fr 24px}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+
+<body>
+<div class="wrap">
+
+  <!-- ===== 2. HTML: layout ===== -->
+  <header>
+    <div class="brand">
+      <div class="logo" aria-hidden="true">🛠️</div>
+      <div>
+        <h1>SelfHeal AI</h1>
+        <div class="tag">Self-healing automation — detect, explain, fix, retry, verify</div>
+      </div>
+    </div>
+    <div class="row">
+      <span class="badge b-warn" title="Every diagnosis in this app comes from pre-written rules">Rule-based engine · no AI model is called</span>
+      <span id="status" class="badge b-idle" role="status" aria-live="polite">Idle</span>
+    </div>
+  </header>
+
+  <!-- Feature 1: dashboard numbers -->
+  <section class="stats" aria-label="Dashboard">
+    <div class="card stat"><div class="num" id="statTotal">0</div><div class="lbl">Total workflow runs</div></div>
+    <div class="card stat s-fail"><div class="num" id="statFail">0</div><div class="lbl">Failures detected</div></div>
+    <div class="card stat s-rec"><div class="num" id="statRec">0</div><div class="lbl">Successful recoveries</div></div>
+    <div class="card stat s-rate"><div class="num" id="statRate">—</div><div class="lbl">Recovery rate</div></div>
+  </section>
+
+  <main class="grid">
+    <!-- LEFT COLUMN -->
+    <div class="col">
+
+      <!-- Features 2 and 10: run and reset -->
+      <section class="card">
+        <h2>Control panel</h2>
+        <div class="row">
+          <select id="scenario" aria-label="Choose a demo scenario">
+            <option value="timeout">Demo error: API timeout</option>
+            <option value="missing_field">Demo error: Missing field</option>
+            <option value="invalid_json">Demo error: Invalid JSON</option>
+            <option value="random">Random error</option>
+            <option value="success">No error (normal run)</option>
+          </select>
+          <button class="btn primary" id="runBtn">▶ Run workflow</button>
+          <button class="btn" id="resetBtn">↺ Reset demo</button>
+        </div>
+        <label class="chk">
+          <input type="checkbox" id="persistent">
+          <span>Make the API outage <b>persistent</b> (API timeout only): retries keep failing, so you can see the 2-retry limit and escalation.</span>
+        </label>
+      </section>
+
+      <!-- The workflow being simulated -->
+      <section class="card">
+        <h2>Workflow: "Sync new order to CRM"</h2>
+        <ol class="pipe" id="pipe"></ol>
+      </section>
+
+      <!-- Features 4, 5: detection, explanation, suggested fix -->
+      <section class="card">
+        <h2>Diagnosis &amp; suggested fix</h2>
+        <div id="diagnosis"><div class="empty">No error yet. Run a workflow with a demo error to see the diagnosis.</div></div>
+      </section>
+
+      <!-- Feature 7: verification -->
+      <section class="card">
+        <h2>Verification result</h2>
+        <div id="verification"><div class="empty">Verification appears after a run finishes.</div></div>
+      </section>
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div class="col">
+
+      <!-- Feature 9: manual approval -->
+      <section class="card">
+        <h2>Manual approval</h2>
+        <div id="approvalBody"><div class="empty">Nothing waiting. Fixes that change data are never applied automatically. They appear here for a human to approve.</div></div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn good" id="approveBtn" disabled>✔ Approve fix &amp; retry</button>
+          <button class="btn bad" id="rejectBtn" disabled>✖ Reject</button>
+        </div>
+      </section>
+
+      <!-- Feature 1: simple charts -->
+      <section class="card">
+        <h2>Run outcomes</h2>
+        <div id="chartOutcomes"></div>
+        <h2 style="margin-top:18px">Errors by type</h2>
+        <div id="chartErrors"></div>
+      </section>
+
+      <!-- Feature 8: execution history -->
+      <section class="card">
+        <h2>Execution history (every step)</h2>
+        <div id="history"><div class="empty" id="historyEmpty">No runs yet.</div></div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    Prototype for demonstration · all data is fake and lives only in browser memory · no network calls, no commands executed.
+  </footer>
+</div>
+
+<script>
+/* ===== 3. JAVASCRIPT ===== */
+
+/* ---------- 3.1 Settings ---------- */
+const STEP_DELAY = 650;   // milliseconds each workflow step "takes" (so the animation is visible)
+const MAX_RETRIES = 2;    // requirement: never retry more than twice
+const REQUIRED_FIELDS = ['order_id', 'customer_name', 'email', 'amount'];
+const SCENARIO_LABELS = {
+  timeout: 'API timeout', missing_field: 'Missing field', invalid_json: 'Invalid JSON', success: 'No error'
+};
+
+/* ---------- 3.2 App state ----------
+   "State" = everything the app needs to remember. Dashboard numbers are drawn from it. */
+function freshCounters() {
+  return {
+    busy: false,            // true while a workflow is running
+    pending: null,          // holds a failed run that is waiting for human approval
+    runId: 0,
+    totalRuns: 0,
+    failures: 0,
+    // outcome counters used by the dashboard and the chart
+    outcomes: { first: 0, auto: 0, approved: 0, unrecovered: 0 },
+    errorCounts: { API_TIMEOUT: 0, MISSING_FIELD: 0, INVALID_JSON: 0 },
+    lastFailure: null       // used to build the optional AI prompt
+  };
+}
+const state = Object.assign({ epoch: 0 }, freshCounters());
+/* "epoch" lets Reset cancel a run that is still in progress:
+   every run remembers the epoch it started in; if Reset bumps the epoch, the old run stops. */
+
+/* ---------- 3.3 Small helpers ---------- */
+const $ = id => document.getElementById(id);
+class Cancelled extends Error {}                       // thrown to stop a run after Reset
+class WorkflowError extends Error {                    // our own error type with a machine-readable code
+  constructor(code, message) { super(message); this.code = code; }
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function wait(ms, epoch) {                       // sleep, then stop if Reset was pressed meanwhile
+  await sleep(ms);
+  if (epoch !== state.epoch) throw new Cancelled();
+}
+/* Build DOM elements safely. textContent (not innerHTML) means text can never be run as code. */
+function h(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+/* ---------- 3.4 RULE-BASED knowledge base ----------
+   IMPORTANT FOR HONESTY: this is NOT artificial intelligence.
+   A developer wrote these explanations in advance. The app looks up the error code in this table.
+   Real AI diagnosis would need a language model; the "Generate AI prompt" button shows how
+   you would hand the same error details to one. */
+const KB = {
+  API_TIMEOUT: {
+    label: 'API Timeout', kind: 'Temporary error', autoRetry: true, fixable: true,
+    explanation: 'The app asked another service for data, but the service did not answer in time. This is like calling someone and getting no answer. They may just be busy.',
+    causes: ['The remote server is overloaded or restarting', 'A short network glitch', 'The request was too slow or too large'],
+    fix: 'Wait a moment, then send the same request again (called "retry with backoff"). Wait longer before each extra try. Stop after 2 retries.',
+    safety: 'Safe to automate: this request only READS data, so repeating it cannot change or damage anything.'
+  },
+  MISSING_FIELD: {
+    label: 'Missing Field', kind: 'Data problem', autoRetry: false, fixable: true,
+    explanation: 'The data arrived, but a required piece (the customer email) is not in it. The next step cannot continue without it, like posting a letter with no address.',
+    causes: ['The source system did not send the field', 'A form allowed the field to be left empty', 'The field was renamed upstream'],
+    fix: 'Add a clearly marked placeholder email and flag the record for human review, then retry.',
+    safety: 'NOT safe to automate: it changes customer data, and a wrong guess could contact the wrong person. A human must approve.'
+  },
+  INVALID_JSON: {
+    label: 'Invalid JSON', kind: 'Data problem', autoRetry: false, fixable: true,
+    explanation: 'JSON is a strict text format that programs use to exchange data. The text we received has a small formatting mistake (here, an extra comma), so the program cannot read it.',
+    causes: ['A trailing comma after the last item', 'A missing quote or bracket', 'The sender built the text by hand instead of using a JSON library'],
+    fix: 'Remove the stray commas from a COPY of the text, then try to read it again.',
+    safety: 'NOT safe to automate: repairing data means guessing what the sender meant, so a human approves first.'
+  },
+  UNKNOWN: {
+    label: 'Unknown Error', kind: 'Unrecognised', autoRetry: false, fixable: false,
+    explanation: 'This error is not in the rule table, so the system does not know a safe fix.',
+    causes: ['A situation the developer has not written a rule for'],
+    fix: 'Escalate to a human.',
+    safety: 'Unknown errors are never fixed automatically.'
+  }
+};
+
+/* ---------- 3.5 The simulated workflow ----------
+   Each step is a normal JavaScript function that either finishes or throws a WorkflowError.
+   The data lives in a "context" object (ctx) that is passed from step to step. */
+function makeContext(run, persistent) {
+  const names = ['Aarav Sharma', 'Priya Verma', 'Rohan Gupta', 'Ananya Singh', 'Karan Mehta', 'Sneha Joshi'];
+  const order = {
+    order_id: 'ORD-' + (1000 + run.id),
+    customer_name: names[run.id % names.length],
+    email: 'customer' + run.id + '@example.com',
+    amount: 1200 + run.id * 349,
+    currency: 'INR'
+  };
+  let raw;                                             // "raw" = the text the fake API will return
+  if (run.key === 'missing_field') {
+    delete order.email;                                // scenario: the email field is absent
+    raw = JSON.stringify(order, null, 2);
+  } else if (run.key === 'invalid_json') {
+    raw = JSON.stringify(order, null, 2).replace(/\n\}$/, ',\n}');  // scenario: trailing comma = broken JSON
+  } else {
+    raw = JSON.stringify(order, null, 2);
+  }
+  return {
+    runId: run.id, raw,
+    // For the timeout scenario: how many calls will fail. Persistent = effectively forever.
+    timeoutFailuresLeft: run.key === 'timeout' ? (persistent ? Infinity : 1) : 0,
+    response: null, parsed: null, record: null
+  };
+}
+
+const STEPS = [
+  { id: 'fetch', name: 'Fetch order from Orders API', run(ctx) {
+      if (ctx.timeoutFailuresLeft > 0) {
+        ctx.timeoutFailuresLeft--;
+        throw new WorkflowError('API_TIMEOUT', 'Request to orders-api.demo timed out after 5000 ms');
+      }
+      ctx.response = ctx.raw;                          // pretend this text came from the network
+  }},
+  { id: 'parse', name: 'Parse response (read the JSON)', run(ctx) {
+      try { ctx.parsed = JSON.parse(ctx.response); }   // JSON.parse is the real browser parser
+      catch (e) { throw new WorkflowError('INVALID_JSON', 'Cannot parse response: ' + e.message); }
+  }},
+  { id: 'validate', name: 'Validate required fields', run(ctx) {
+      const missing = REQUIRED_FIELDS.filter(f => ctx.parsed[f] === undefined || ctx.parsed[f] === '');
+      if (missing.length) throw new WorkflowError('MISSING_FIELD', 'Missing required field(s): ' + missing.join(', '));
+  }},
+  { id: 'send', name: 'Create record in CRM (simulated)', run(ctx) {
+      // No real CRM exists: we just build an object in memory.
+      ctx.record = { crm_id: 'CRM-' + (7000 + ctx.runId), email: ctx.parsed.email, amount: ctx.parsed.amount };
+  }},
+  { id: 'verify', name: 'Verify result', run(ctx) {
+      if (!ctx.record || !ctx.record.email) throw new WorkflowError('UNKNOWN', 'Verification failed: CRM record is incomplete');
+  }}
+];
+
+/* ---------- 3.6 Fixes (the data-changing ones need approval) ----------
+   computeFix returns a NEW string. It never touches files, servers, or the original. */
+function computeFix(raw, code) {
+  if (code === 'INVALID_JSON') {
+    return raw.replace(/,(\s*[}\]])/g, '$1');          // remove commas right before } or ]
+  }
+  if (code === 'MISSING_FIELD') {
+    const obj = JSON.parse(raw);
+    obj.email = 'pending-review@placeholder.invalid';  // clearly fake address
+    obj.needs_review = true;                           // flag so a human checks later
+    return JSON.stringify(obj, null, 2);
+  }
+  return raw;
+}
+
+/* ---------- 3.7 Running steps ---------- */
+async function runSteps(run, ctx, label, epoch) {
+  resetPipeline();
+  ctx.response = null; ctx.parsed = null; ctx.record = null;   // start each attempt clean
+  for (const step of STEPS) {
+    setStep(step.id, 'running');
+    await wait(STEP_DELAY, epoch);
+    try {
+      step.run(ctx);
+      setStep(step.id, 'done');
+      log(run, 'ok', label + ': ✓ ' + step.name);
+    } catch (err) {
+      const e = err instanceof WorkflowError ? err : new WorkflowError('UNKNOWN', String(err.message || err));
+      setStep(step.id, 'failed');
+      log(run, 'error', label + ': ✗ ' + step.name + ' — ' + e.message);
+      return { ok: false, error: e, step };
+    }
+  }
+  return { ok: true };
+}
+
+/* ---------- 3.8 Starting a run (Feature 2) ---------- */
+async function startRun() {
+  if (state.busy || state.pending) return;
+  const epoch = state.epoch;
+  state.busy = true; setButtons();
+
+  let key = $('scenario').value;
+  if (key === 'random') key = ['timeout', 'missing_field', 'invalid_json'][Math.floor(Math.random() * 3)];
+  const run = { id: ++state.runId, key };
+  state.totalRuns++; renderStats();
+
+  const ctx = makeContext(run, $('persistent').checked);
+  clearDiagnosis(); setVerification(null);
+  setStatus('Run #' + run.id + ' running', 'info');
+  log(run, 'start', 'Workflow started (scenario: ' + SCENARIO_LABELS[key] + ')');
+
+  try {
+    const r = await runSteps(run, ctx, 'Attempt 1', epoch);
+    if (r.ok) finish(run, ctx, 'first');
+    else await handleFailure(run, ctx, r.error, r.step, epoch);
+  } catch (e) {
+    if (!(e instanceof Cancelled)) {                   // Cancelled just means Reset was pressed
+      console.error(e);
+      log(run, 'error', 'Unexpected app error: ' + e.message);
+      setStatus('App error', 'err');
+    }
+  } finally {
+    if (epoch === state.epoch) { state.busy = false; setButtons(); }
+  }
+}
+
+/* ---------- 3.9 Failure handling: detect -> explain -> decide ---------- */
+async function handleFailure(run, ctx, error, step, epoch) {
+  const kb = KB[error.code] || KB.UNKNOWN;
+  state.failures++;
+  if (state.errorCounts[error.code] !== undefined) state.errorCounts[error.code]++;
+  state.lastFailure = { error, step, ctx };
+  renderStats();
+
+  // Detect + explain + suggest
+  log(run, 'detect', 'Error detected: ' + kb.label + ' (rule matched on code ' + error.code + ')');
+  log(run, 'detect', 'Explanation: ' + kb.explanation);
+  log(run, 'detect', 'Suggested fix: ' + kb.fix);
+  showDiagnosis(error, step);
+  setVerification('pending');
+
+  // Decision rule #1: temporary AND read-only -> retry automatically, max 2 times
+  if (kb.autoRetry) {
+    setStatus('Auto-retrying', 'warn');
+    for (let i = 1; i <= MAX_RETRIES; i++) {
+      const delaySec = i;                              // backoff: wait 1s, then 2s
+      log(run, 'retry', 'Safe to auto-retry. Waiting ' + delaySec + 's (backoff) before retry ' + i + ' of ' + MAX_RETRIES);
+      await wait(delaySec * 1000, epoch);
+      const r = await runSteps(run, ctx, 'Retry ' + i, epoch);
+      if (r.ok) { finish(run, ctx, 'auto'); return; }
+      log(run, 'error', 'Retry ' + i + ' failed.');
+    }
+    finish(run, ctx, 'unrecovered', 'Retry limit (' + MAX_RETRIES + ') reached. Stopped and escalated to a human. No more automatic attempts.');
+    return;
+  }
+
+  // Decision rule #2: the fix would change data -> pause and ask a human
+  if (kb.fixable) {
+    state.pending = { run, ctx, error, epoch };
+    renderApproval();
+    setStatus('Awaiting approval', 'warn');
+    log(run, 'approval', 'Fix changes data, so it will NOT run automatically. Paused: waiting for human approval.');
+    return;
+  }
+
+  // Decision rule #3: unknown error -> escalate
+  finish(run, ctx, 'unrecovered', 'No safe fix known. Escalated to a human.');
+}
+
+/* ---------- 3.10 Manual approval (Feature 9) ---------- */
+async function approveFix() {
+  const p = state.pending;
+  if (!p || state.busy) return;
+  const epoch = state.epoch;
+  state.pending = null; state.busy = true; renderApproval(); setButtons();
+  try {
+    log(p.run, 'approval', 'Human APPROVED the fix.');
+    p.ctx.raw = computeFix(p.ctx.raw, p.error.code);   // changes only an in-memory copy
+    log(p.run, 'approval', 'Fix applied to the in-memory copy of the data (nothing outside this page was touched).');
+    setStatus('Retrying after fix', 'warn');
+    await wait(500, epoch);
+    const r = await runSteps(p.run, p.ctx, 'Retry after fix', epoch);
+    if (r.ok) finish(p.run, p.ctx, 'approved');
+    else finish(p.run, p.ctx, 'unrecovered', 'Retry after the approved fix still failed. Escalated to a human.');
+  } catch (e) {
+    if (!(e instanceof Cancelled)) { console.error(e); setStatus('App error', 'err'); }
+  } finally {
+    if (epoch === state.epoch) { state.busy = false; setButtons(); }
+  }
+}
+
+function rejectFix() {
+  const p = state.pending;
+  if (!p) return;
+  state.pending = null; renderApproval(); setButtons();
+  log(p.run, 'approval', 'Human REJECTED the fix.');
+  finish(p.run, p.ctx, 'unrecovered', 'Fix rejected. The workflow stays stopped and no data was changed.');
+}
+
+/* ---------- 3.11 Finishing a run and verifying (Feature 7) ---------- */
+function finish(run, ctx, outcome, note) {
+  state.outcomes[outcome]++;
+  const success = outcome !== 'unrecovered';
+  const text = { first: 'Succeeded', auto: 'Recovered (auto-retry)', approved: 'Recovered (after approval)', unrecovered: 'Not recovered' }[outcome];
+  setStatus(text, success ? 'ok' : 'err');
+  if (success) {
+    log(run, 'verify', 'Verification PASSED. ' + (outcome === 'first' ? 'Workflow succeeded on the first try.' : 'The workflow recovered. All steps passed after the fix/retry.'));
+  } else {
+    log(run, 'error', 'Verification FAILED. ' + (note || ''));
+  }
+  setVerification(success ? 'pass' : 'fail', ctx, outcome, note);
+  renderStats();
+}
+
+/* Real checks on the real data the workflow produced, not just "it said OK". */
+function verifyChecks(ctx) {
+  const p = ctx.parsed;
+  return [
+    { label: 'Response is valid JSON', pass: !!p },
+    { label: 'All required fields present (' + REQUIRED_FIELDS.join(', ') + ')', pass: !!p && REQUIRED_FIELDS.every(f => p[f] !== undefined && p[f] !== '') },
+    { label: 'CRM record created', pass: !!ctx.record }
+  ];
+}
+
+/* ---------- 3.12 Optional AI prompt (honest bridge to real AI) ---------- */
+function buildAIPrompt() {
+  const f = state.lastFailure;
+  if (!f) return '';
+  return [
+    'You are a senior automation engineer helping a beginner.',
+    'A workflow step failed. Diagnose it.',
+    '',
+    'Workflow: Sync new order to CRM',
+    'Failed step: ' + f.step.name,
+    'Error code: ' + f.error.code,
+    'Error message: ' + f.error.message,
+    'Data being processed (fake demo data):',
+    f.ctx.raw,
+    '',
+    'Please answer in plain English:',
+    '1. What most likely went wrong?',
+    '2. List the 3 most likely causes, most likely first.',
+    '3. Suggest the safest fix.',
+    '4. Is it safe to retry automatically, or should a human approve first? Explain why.'
+  ].join('\n');
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch (e) {                                          // fallback for browsers that block clipboard on local files
+    const ta = h('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (_) {}
+    ta.remove(); return ok;
+  }
+}
+
+/* ---------- 3.13 Rendering (drawing the screen from state) ---------- */
+function renderStats() {
+  const rec = state.outcomes.auto + state.outcomes.approved;
+  $('statTotal').textContent = state.totalRuns;
+  $('statFail').textContent = state.failures;
+  $('statRec').textContent = rec;
+  $('statRate').textContent = state.failures ? Math.round(rec / state.failures * 100) + '%' : '—';
+
+  drawBars('chartOutcomes', state.totalRuns, [
+    ['Succeeded first time', state.outcomes.first, 'var(--info)'],
+    ['Auto-recovered', state.outcomes.auto, 'var(--ok)'],
+    ['Recovered after approval', state.outcomes.approved, 'var(--accent2)'],
+    ['Not recovered', state.outcomes.unrecovered, 'var(--err)']
+  ]);
+  drawBars('chartErrors', state.failures, [
+    ['API timeout', state.errorCounts.API_TIMEOUT, 'var(--warn)'],
+    ['Missing field', state.errorCounts.MISSING_FIELD, '#c4a1ff'],
+    ['Invalid JSON', state.errorCounts.INVALID_JSON, 'var(--accent)']
+  ]);
+}
+function drawBars(containerId, total, rows) {
+  const box = $(containerId); box.replaceChildren();
+  rows.forEach(([label, value, color]) => {
+    const row = h('div', 'bar');
+    const track = h('div', 'track'); const fill = h('div', 'fill');
+    fill.style.background = color;
+    fill.style.width = (total ? value / total * 100 : 0) + '%';
+    track.appendChild(fill);
+    row.append(h('span', '', label), track, h('b', '', String(value)));
+    box.appendChild(row);
+  });
+}
+
+function setStatus(text, kind) {
+  const s = $('status'); s.textContent = text; s.className = 'badge b-' + kind;
+}
+
+function buildPipeline() {
+  const ol = $('pipe'); ol.replaceChildren();
+  STEPS.forEach((s, i) => {
+    const li = h('li'); li.id = 'step-' + s.id;
+    li.append(h('span', 'ic', String(i + 1)), h('span', '', s.name));
+    ol.appendChild(li);
+  });
+}
+function setStep(id, status) {                          // status: running | done | failed
+  const li = $('step-' + id); li.className = status;
+  li.querySelector('.ic').textContent = status === 'done' ? '✓' : status === 'failed' ? '✗' : status === 'running' ? '' : li.querySelector('.ic').textContent;
+}
+function resetPipeline() {
+  STEPS.forEach((s, i) => { const li = $('step-' + s.id); li.className = ''; li.querySelector('.ic').textContent = String(i + 1); });
+}
+
+function clearDiagnosis() {
+  $('diagnosis').replaceChildren(h('div', 'empty', 'No error in this run so far.'));
+}
+function showDiagnosis(error, step) {
+  const kb = KB[error.code] || KB.UNKNOWN;
+  const box = $('diagnosis'); box.replaceChildren();
+
+  const top = h('div', 'row');
+  top.append(h('span', 'badge b-err', error.code), h('span', 'badge ' + (kb.autoRetry ? 'b-ok' : 'b-warn'), kb.kind),
+             h('span', 'badge ' + (kb.autoRetry ? 'b-ok' : 'b-warn'), kb.autoRetry ? 'Auto-retry allowed' : 'Human approval required'));
+  box.appendChild(top);
+
+  box.append(h('h3', '', 'What the system detected'), h('pre', '', 'Step: ' + step.name + '\n' + error.message));
+  box.append(h('h3', '', 'What this means (plain English)'), h('div', '', kb.explanation));
+  box.append(h('h3', '', 'Possible causes'));
+  const ul = h('ul'); kb.causes.forEach(c => ul.appendChild(h('li', '', c))); box.appendChild(ul);
+  box.append(h('h3', '', 'Recommended fix'), h('div', '', kb.fix));
+  box.append(h('h3', '', 'Safety decision'), h('div', '', kb.safety));
+
+  // Honest labelling of where this text came from
+  const n1 = h('div', 'notice');
+  n1.innerHTML = '<b>🧩 Rule-based diagnosis.</b> This text was written in advance by the developer and chosen by matching the error code. It is <b>not</b> generated by an AI model.';
+  box.appendChild(n1);
+
+  const n2 = h('div', 'notice');
+  n2.innerHTML = '<b>🤖 Optional: real AI diagnosis.</b> No AI is called from this page. You can generate a ready-made prompt and paste it into an AI assistant of your choice to get a genuine AI diagnosis.';
+  const btn = h('button', 'btn', 'Generate AI prompt'); btn.style.marginTop = '8px';
+  const ta = h('textarea'); ta.readOnly = true; ta.hidden = true; ta.setAttribute('aria-label', 'AI prompt');
+  const copy = h('button', 'btn', 'Copy prompt'); copy.hidden = true; copy.style.marginTop = '6px';
+  btn.onclick = () => { ta.value = buildAIPrompt(); ta.hidden = false; copy.hidden = false; };
+  copy.onclick = async () => { const ok = await copyText(ta.value); copy.textContent = ok ? 'Copied ✓' : 'Select the text and press Ctrl+C'; };
+  n2.append(h('br'), btn, ta, copy);
+  box.appendChild(n2);
+}
+
+function setVerification(mode, ctx, outcome, note) {
+  const box = $('verification'); box.replaceChildren();
+  if (mode === null) { box.appendChild(h('div', 'empty', 'Verification appears after a run finishes.')); return; }
+  if (mode === 'pending') { box.appendChild(h('div', 'empty', 'Not verified yet. Verification runs after the retry or approved fix.')); return; }
+  const pass = mode === 'pass';
+  box.appendChild(h('span', 'badge ' + (pass ? 'b-ok' : 'b-err'), pass ? '✔ Recovery verified' : '✖ Recovery failed'));
+  if (note) box.appendChild(h('div', 'muted', note)).style.margin = '8px 0';
+  const ul = h('ul');
+  verifyChecks(ctx).forEach(c => ul.appendChild(h('li', '', (c.pass ? '✓ ' : '✗ ') + c.label)));
+  box.appendChild(ul);
+  if (ctx.record) box.appendChild(h('pre', '', 'CRM record: ' + JSON.stringify(ctx.record)));
+}
+
+function renderApproval() {
+  const body = $('approvalBody'); body.replaceChildren();
+  const p = state.pending;
+  if (!p) {
+    body.appendChild(h('div', 'empty', 'Nothing waiting. Fixes that change data are never applied automatically. They appear here for a human to approve.'));
+    return;
+  }
+  const kb = KB[p.error.code];
+  body.append(h('span', 'badge b-warn', 'Approval needed: ' + kb.label), h('div', '', kb.safety));
+  (body.lastChild).style.margin = '8px 0';
+  const two = h('div', 'two');
+  const a = h('div'); a.append(h('small', '', 'Before (current data)'), h('pre', '', p.ctx.raw));
+  const b = h('div'); b.append(h('small', '', 'After (proposed fix)'), h('pre', '', computeFix(p.ctx.raw, p.error.code)));
+  two.append(a, b); body.appendChild(two);
+}
+
+/* Execution history (Feature 8): one line per step, newest at the bottom */
+function log(run, level, text) {
+  const empty = $('historyEmpty'); if (empty) empty.remove();
+  const labels = { start: 'START', ok: 'OK', error: 'ERROR', detect: 'DETECT', retry: 'RETRY', approval: 'APPROVAL', verify: 'VERIFY', info: 'INFO' };
+  const ev = h('div', 'ev');
+  ev.append(h('span', 't', new Date().toLocaleTimeString([], { hour12: false })),
+            h('span', 'lv', '#' + run.id),
+            h('span', 'lv lv-' + level, labels[level] || 'INFO'),
+            h('span', '', text));
+  const hist = $('history'); hist.appendChild(ev); hist.scrollTop = hist.scrollHeight;
+}
+
+function setButtons() {
+  $('runBtn').disabled = state.busy || !!state.pending;
+  $('scenario').disabled = state.busy || !!state.pending;
+  $('persistent').disabled = state.busy || !!state.pending;
+  $('approveBtn').disabled = !state.pending || state.busy;
+  $('rejectBtn').disabled = !state.pending || state.busy;
+}
+
+/* ---------- 3.14 Reset (Feature 10) ---------- */
+function resetDemo() {
+  state.epoch++;                                        // cancels any run still in progress
+  Object.assign(state, freshCounters());
+  resetPipeline();
+  $('diagnosis').replaceChildren(h('div', 'empty', 'No error yet. Run a workflow with a demo error to see the diagnosis.'));
+  setVerification(null);
+  $('history').replaceChildren(Object.assign(h('div', 'empty', 'No runs yet.'), { id: 'historyEmpty' }));
+  renderApproval(); renderStats(); setButtons(); setStatus('Idle', 'idle');
+}
+
+/* ---------- 3.15 Start-up: connect buttons to functions ---------- */
+$('runBtn').addEventListener('click', startRun);
+$('resetBtn').addEventListener('click', resetDemo);
+$('approveBtn').addEventListener('click', approveFix);
+$('rejectBtn').addEventListener('click', rejectFix);
+buildPipeline();
+resetDemo();
+</script>
+</body>
+</html>
